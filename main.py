@@ -2151,7 +2151,7 @@ class UniversityRegistrationBot:
                 return
             
             # Build detailed status for this group
-            group_info = queue_manager.groups.get(str(group_id), {})
+            group_info = queue_manager.groups.get(group_id, {})
             group_name = group_info.get('name', f'Group {group_id}')
             status_text = f"📊 **Detailed Queue Status - {group_name}**\n\n"
             
@@ -2849,7 +2849,7 @@ class UniversityRegistrationBot:
                 group_queue_count = 0
                 group_courses = queue_manager.group_courses.get(group_id, {})
                 for course_id in group_courses:
-                    queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
+                    queue = queue_manager.group_queues.get(str(group_id), {}).get(course_id, [])
                     group_queue_count += len(queue)
                     
                 total_registered += group_queue_count
