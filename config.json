@@ -1,0 +1,180 @@
+{
+  "groups": {
+    "-4891270536": {
+      "name": "test3",
+      "created_at": "2025-09-19T22:44:29.169691",
+      "courses": {
+        "math101": {
+          "name": "Mathematics 101",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "phys201": {
+          "name": "Physics 201",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "chem150": {
+          "name": "Chemistry 150",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "bio110": {
+          "name": "Biology 110",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "cs200": {
+          "name": "Computer Science 200",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        }
+      }
+    },
+    "-4734662699": {
+      "name": "test4",
+      "created_at": "2025-09-19T23:26:13.585069",
+      "courses": {
+        "oop_lab": {
+          "name": "ООП Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "cvm_lab": {
+          "name": "ЦВМ Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "discrete": {
+          "name": "Дискретка",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        }
+      }
+    },
+    "-4937532269": {
+      "name": "test5",
+      "created_at": "2025-09-20T02:17:24.273990",
+      "courses": {
+        "oop_lab": {
+          "name": "ООП Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "cvm_lab": {
+          "name": "ЦВМ Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "discrete": {
+          "name": "Дискретка",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "chinazes": {
+          "name": "группа по чиназес",
+          "schedule": {
+            "day": 5,
+            "time": "21:45"
+          }
+        }
+      }
+    },
+    "-4826151998": {
+      "name": "test6",
+      "created_at": "2025-09-20T10:33:11.285543",
+      "courses": {
+        "oop_lab": {
+          "name": "ООП Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "cvm_lab": {
+          "name": "ЦВМ Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "discrete": {
+          "name": "Дискретка",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        }
+      }
+    },
+    "-4862433235": {
+      "name": "Тест7",
+      "created_at": "2025-09-20T11:33:03.525066",
+      "courses": {
+        "oop_lab": {
+          "name": "ООП Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "cvm_lab": {
+          "name": "ЦВМ Лаб",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "discrete": {
+          "name": "Дискретка",
+          "schedule": {
+            "day": 2,
+            "time": "20:00"
+          }
+        },
+        "тст": {
+          "name": "Тест курса",
+          "schedule": {
+            "day": 4,
+            "time": "23:59"
+          }
+        }
+      }
+    }
+  },
+  "group_admins": {
+    "-4734662699": [],
+    "-4937532269": [
+      793703053
+    ],
+    "-4862433235": [
+      1365975238
+    ]
+  },
+  "max_queue_size": 20,
+  "group_queue_sizes": {
+    "-4734662699": 35
+  }
+}

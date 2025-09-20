@@ -1,0 +1,162 @@
+{
+  "group_queues": {
+    "-4891270536": {
+      "math101": [],
+      "phys201": [],
+      "chem150": [],
+      "bio110": [],
+      "cs200": []
+    },
+    "-4734662699": {
+      "oop_lab": [],
+      "cvm_lab": [
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "Ksusha",
+          "registered_at": "2025-09-20T00:55:00.731989",
+          "position": 1
+        }
+      ],
+      "discrete": [
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "ouoi",
+          "registered_at": "2025-09-20T00:47:02.596584",
+          "position": 1
+        },
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "gfuy",
+          "registered_at": "2025-09-20T00:47:23.003307",
+          "position": 2
+        },
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "jh",
+          "registered_at": "2025-09-20T00:46:22.375977",
+          "position": 3
+        },
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "hh",
+          "registered_at": "2025-09-20T00:47:30.799496",
+          "position": 4
+        },
+        {
+          "user_id": 5187143917,
+          "username": "thechosen017",
+          "full_name": "23asd",
+          "registered_at": "2025-09-20T02:29:22.532587",
+          "position": 5
+        }
+      ]
+    },
+    "-4937532269": {
+      "oop_lab": [],
+      "cvm_lab": [],
+      "discrete": [],
+      "chinazes": [
+        {
+          "user_id": 107541091,
+          "username": "Forrest33",
+          "full_name": "\u0415\u0431\u0430\u043d\u044b\u0439 \u0431\u043e\u0442",
+          "registered_at": "2025-09-20T02:26:17.954003",
+          "position": 1
+        },
+        {
+          "user_id": 107541091,
+          "username": "Forrest33",
+          "full_name": "\u0414\u0438\u0431\u0438\u043b1",
+          "registered_at": "2025-09-20T02:25:24.666157",
+          "position": 2
+        },
+        {
+          "user_id": 793703053,
+          "username": "piterskiydurachokk",
+          "full_name": "\u043b\u0435\u0445\u0432",
+          "registered_at": "2025-09-20T02:24:17.269814",
+          "position": 3
+        }
+      ]
+    },
+    "-4826151998": {
+      "oop_lab": [],
+      "cvm_lab": [],
+      "discrete": []
+    },
+    "-4862433235": {
+      "oop_lab": [],
+      "cvm_lab": [],
+      "discrete": [],
+      "\u0442\u0441\u0442": [
+        {
+          "user_id": 107541091,
+          "username": "Forrest33",
+          "full_name": "\u0410\u043b\u0438",
+          "registered_at": "2025-09-20T12:39:27.170602",
+          "position": 1
+        }
+      ]
+    }
+  },
+  "group_registration_status": {
+    "-4891270536": {
+      "math101": false,
+      "phys201": false,
+      "chem150": false,
+      "bio110": false,
+      "cs200": false
+    },
+    "-4734662699": {
+      "oop_lab": true,
+      "cvm_lab": true,
+      "discrete": true
+    },
+    "-4937532269": {
+      "oop_lab": false,
+      "cvm_lab": false,
+      "discrete": false,
+      "chinazes": true
+    },
+    "-4826151998": {
+      "oop_lab": false,
+      "cvm_lab": false,
+      "discrete": false
+    },
+    "-4888354109": {
+      "phys201": false,
+      "chem150": false,
+      "bio110": false,
+      "cs200": false,
+      "testc": true,
+      "tst2": false
+    },
+    "-1001234567890": {
+      "\u0446\u0432\u043c": true,
+      "\u0434\u0438\u0441\u043a\u0440\u0435\u0442\u043a\u0430": false
+    },
+    "-4971662305": {
+      "sd2": true,
+      "asd": false
+    },
+    "-4862433235": {
+      "oop_lab": false,
+      "cvm_lab": false,
+      "discrete": false,
+      "\u0442\u0441\u0442": true
+    }
+  },
+  "user_groups": {
+    "107541091": -4862433235,
+    "793703053": -4937532269,
+    "5187143917": -4937532269,
+    "1365975238": -4862433235
+  },
+  "last_updated": "2025-09-20T12:39:27.170655",
+  "format_version": "2.0"
+}
