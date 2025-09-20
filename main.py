@@ -813,10 +813,16 @@ class QueueManager:
             active_statuses = ['member', 'administrator', 'creator']
             is_active = bot_member.status in active_statuses
             logger.info(f"Bot membership check for group {group_id}: status='{bot_member.status}', active={is_active}")
+            
+            # Additional debugging for disbanded groups
+            if bot_member.status not in active_statuses:
+                logger.warning(f"Bot has inactive status '{bot_member.status}' in group {group_id}")
+                
             return is_active
         except Exception as e:
             # If we can't get member status, the bot is likely not in the group
             logger.warning(f"Bot membership check failed for group {group_id}: {e}")
+            logger.error(f"Exception type: {type(e).__name__}, Exception details: {str(e)}")
             # For disbanded groups, this will typically throw a "Chat not found" or "Bad Request" error
             return False
     
@@ -3667,6 +3673,24 @@ class UniversityRegistrationBot:
             group_id = int(context.args[0])
             await update.message.reply_text(f"🔍 Testing bot membership in group {group_id}...")
             
+            # Enhanced debugging - try multiple methods to check group status
+            try:
+                # Method 1: Check bot member status
+                bot_member = await self.application.bot.get_chat_member(group_id, self.application.bot.id)
+                bot_status = bot_member.status
+                status_details = f"Status: '{bot_status}'"
+            except Exception as e:
+                bot_status = "ERROR"
+                status_details = f"Error getting status: {type(e).__name__}: {str(e)}"
+            
+            try:
+                # Method 2: Try to get chat info
+                chat_info = await self.application.bot.get_chat(group_id)
+                chat_details = f"Chat exists: {chat_info.title} (type: {chat_info.type})"
+            except Exception as e:
+                chat_details = f"Chat error: {type(e).__name__}: {str(e)}"
+            
+            # Use our standard check method
             is_member = await queue_manager.check_bot_in_group(self.application.bot, group_id)
             
             # Check if group exists in config
@@ -3676,6 +3700,9 @@ class UniversityRegistrationBot:
             result = f"**Group {group_id} ({group_name})**\n\n"
             result += f"✅ In config: {group_in_config}\n"
             result += f"🤖 Bot is member: {is_member}\n\n"
+            result += f"**Debug Info:**\n"
+            result += f"• {status_details}\n"
+            result += f"• {chat_details}\n\n"
             
             if group_in_config and not is_member:
                 result += "⚠️ **This group appears to be stale** (in config but bot not member)"
