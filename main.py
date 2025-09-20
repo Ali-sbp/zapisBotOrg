@@ -1713,10 +1713,10 @@ class UniversityRegistrationBot:
                 await query.edit_message_text("❌ Access denied. Dev privileges required.")
                 return
             
-            group_info = queue_manager.groups.get(group_id, {})
+            group_info = queue_manager.groups.get(str(group_id), {})
             group_name = group_info.get('name', f'Group {group_id}')
-            course_count = len(queue_manager.group_courses.get(group_id, {}))
-            queue_count = sum(len(q) for q in queue_manager.group_queues.get(group_id, {}).values())
+            course_count = len(queue_manager.group_courses.get(str(group_id), {}))
+            queue_count = sum(len(q) for q in queue_manager.group_queues.get(str(group_id), {}).values())
             
             # Confirm removal
             keyboard = [
@@ -1790,10 +1790,10 @@ class UniversityRegistrationBot:
                 await query.edit_message_text("❌ Access denied. Dev privileges required.")
                 return
             
-            group_info = queue_manager.groups.get(group_id, {})
+            group_info = queue_manager.groups.get(str(group_id), {})
             group_name = group_info.get('name', f'Group {group_id}')
-            course_count = len(queue_manager.group_courses.get(group_id, {}))
-            queue_count = sum(len(q) for q in queue_manager.group_queues.get(group_id, {}).values())
+            course_count = len(queue_manager.group_courses.get(str(group_id), {}))
+            queue_count = sum(len(q) for q in queue_manager.group_queues.get(str(group_id), {}).values())
             
             if queue_manager.remove_stale_group(group_id):
                 await query.edit_message_text(
@@ -3613,7 +3613,13 @@ class UniversityRegistrationBot:
         # Check each group
         for group_id, group_info in queue_manager.groups.items():
             group_name = group_info.get('name', f'Group {group_id}')
-            is_member = await queue_manager.check_bot_in_group(self.application.bot, group_id)
+            # Convert group_id to int for the API call
+            try:
+                group_id_int = int(group_id)
+                is_member = await queue_manager.check_bot_in_group(self.application.bot, group_id_int)
+            except (ValueError, TypeError):
+                logger.error(f"Invalid group_id format: {group_id}")
+                is_member = False
             
             if is_member:
                 active_groups.append((group_id, group_name))
