@@ -2157,7 +2157,7 @@ class UniversityRegistrationBot:
             
             total_registered = 0
             for course_id, course_name in group_courses.items():
-                queue = queue_manager.group_queues.get(str(group_id), {}).get(course_id, [])
+                queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
                 total_registered += len(queue)
                 status_text += f"📚 **{course_name}** ({len(queue)} registered):\n"
                 
@@ -2849,7 +2849,7 @@ class UniversityRegistrationBot:
                 group_queue_count = 0
                 group_courses = queue_manager.group_courses.get(group_id, {})
                 for course_id in group_courses:
-                    queue = queue_manager.group_queues.get(str(group_id), {}).get(course_id, [])
+                    queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
                     group_queue_count += len(queue)
                     
                 total_registered += group_queue_count
