@@ -2144,35 +2144,46 @@ class UniversityRegistrationBot:
 
         # Handle admin group selection for status viewing
         if data.startswith("admin_status_group_"):
-            group_id = int(data.replace("admin_status_group_", ""))
-            group_courses = queue_manager.get_group_courses(group_id)
-            if not group_courses:
-                await query.edit_message_text("❌ No courses found in this group!")
-                return
-            
-            # Build detailed status for this group
-            group_info = queue_manager.groups.get(group_id, {})
-            group_name = group_info.get('name', f'Group {group_id}')
-            status_text = f"📊 **Detailed Queue Status - {group_name}**\n\n"
-            
-            total_registered = 0
-            for course_id, course_name in group_courses.items():
-                queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
-                total_registered += len(queue)
-                status_text += f"📚 **{course_name}** ({len(queue)} registered):\n"
+            try:
+                group_id = int(data.replace("admin_status_group_", ""))
+                logger.info(f"Admin status callback for group_id: {group_id} (type: {type(group_id)})")
                 
-                if queue:
-                    for i, entry in enumerate(queue, 1):
-                        reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%H:%M:%S")
-                        status_text += f"  {i}. {entry['full_name']} (@{entry['username']}) - {reg_time}\n"
-                else:
-                    status_text += "  No registrations\n"
-                status_text += "\n"
-            
-            status_text += f"**Total registrations in group: {total_registered}**"
-            
-            await query.edit_message_text(status_text, parse_mode='Markdown')
-            return
+                group_courses = queue_manager.get_group_courses(group_id)
+                logger.info(f"Found {len(group_courses)} courses for group {group_id}")
+                
+                if not group_courses:
+                    await query.edit_message_text("❌ No courses found in this group!")
+                    return
+                
+                # Build detailed status for this group
+                group_info = queue_manager.groups.get(group_id, {})
+                group_name = group_info.get('name', f'Group {group_id}')
+                status_text = f"📊 **Detailed Queue Status - {group_name}**\n\n"
+                
+                total_registered = 0
+                for course_id, course_name in group_courses.items():
+                    queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
+                    total_registered += len(queue)
+                    logger.info(f"Course {course_id}: {len(queue)} registrations")
+                    status_text += f"📚 **{course_name}** ({len(queue)} registered):\n"
+                    
+                    if queue:
+                        for i, entry in enumerate(queue, 1):
+                            reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%H:%M:%S")
+                            status_text += f"  {i}. {entry['full_name']} (@{entry['username']}) - {reg_time}\n"
+                    else:
+                        status_text += "  No registrations\n"
+                    status_text += "\n"
+                
+                status_text += f"**Total registrations in group: {total_registered}**"
+                
+                await query.edit_message_text(status_text, parse_mode='Markdown')
+                return
+                
+            except Exception as e:
+                logger.error(f"Error in admin_status_group callback: {e}", exc_info=True)
+                await query.edit_message_text("❌ Sorry, an error occurred. Please try again later.")
+                return
 
         # Handle admin group selection for adding courses
         if data.startswith("admin_add_course_group_"):
