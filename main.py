@@ -3670,8 +3670,8 @@ class UniversityRegistrationBot:
             is_member = await queue_manager.check_bot_in_group(self.application.bot, group_id)
             
             # Check if group exists in config
-            group_in_config = str(group_id) in queue_manager.groups
-            group_name = queue_manager.groups.get(str(group_id), {}).get('name', 'Unknown')
+            group_in_config = group_id in queue_manager.groups
+            group_name = queue_manager.groups.get(group_id, {}).get('name', 'Unknown')
             
             result = f"**Group {group_id} ({group_name})**\n\n"
             result += f"✅ In config: {group_in_config}\n"
