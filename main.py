@@ -806,29 +806,18 @@ class QueueManager:
     async def check_bot_in_group(self, bot_instance, group_id: int) -> bool:
         """Check if bot is still an active member of the specified group"""
         try:
-            # Method 1: Try to get bot's member status in the group
-            try:
-                bot_member = await bot_instance.get_chat_member(group_id, bot_instance.id)
-                # Bot is active if status is 'member', 'administrator', or 'creator'
-                # Bot is NOT active if status is 'left' or 'kicked'
-                active_statuses = ['member', 'administrator', 'creator']
-                is_active = bot_member.status in active_statuses
-                logger.info(f"Bot status in group {group_id}: {bot_member.status} (active: {is_active})")
-                return is_active
-            except Exception as member_error:
-                logger.warning(f"Could not get bot member status in group {group_id}: {member_error}")
-                
-                # Method 2: Fallback - try to get chat info (less reliable)
-                try:
-                    await bot_instance.get_chat(group_id)
-                    logger.info(f"Bot can access chat info for group {group_id}, assuming active")
-                    return True
-                except Exception as chat_error:
-                    logger.warning(f"Bot cannot access group {group_id}: {chat_error}")
-                    return False
-                    
+            # Try to get bot's member status in the group - this is the most reliable method
+            bot_member = await bot_instance.get_chat_member(group_id, bot_instance.id)
+            # Bot is active if status is 'member', 'administrator', or 'creator'
+            # Bot is NOT active if status is 'left' or 'kicked'
+            active_statuses = ['member', 'administrator', 'creator']
+            is_active = bot_member.status in active_statuses
+            logger.info(f"Bot membership check for group {group_id}: status='{bot_member.status}', active={is_active}")
+            return is_active
         except Exception as e:
-            logger.warning(f"Error checking bot membership in group {group_id}: {e}")
+            # If we can't get member status, the bot is likely not in the group
+            logger.warning(f"Bot membership check failed for group {group_id}: {e}")
+            # For disbanded groups, this will typically throw a "Chat not found" or "Bad Request" error
             return False
     
     def remove_stale_group(self, group_id: int) -> bool:
@@ -3663,6 +3652,47 @@ class UniversityRegistrationBot:
         
         await update.message.reply_text(message, parse_mode='Markdown')
 
+    async def dev_test_group_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Dev: Test bot membership in a specific group"""
+        user_id = update.effective_user.id
+        if not queue_manager.is_dev(user_id):
+            await update.message.reply_text("❌ Access denied. Dev privileges required.")
+            return
+        
+        if len(context.args) != 1:
+            await update.message.reply_text("Usage: /dev_test_group <group_id>\nExample: /dev_test_group -4734662699")
+            return
+            
+        try:
+            group_id = int(context.args[0])
+            await update.message.reply_text(f"🔍 Testing bot membership in group {group_id}...")
+            
+            is_member = await queue_manager.check_bot_in_group(self.application.bot, group_id)
+            
+            # Check if group exists in config
+            group_in_config = str(group_id) in queue_manager.groups
+            group_name = queue_manager.groups.get(str(group_id), {}).get('name', 'Unknown')
+            
+            result = f"**Group {group_id} ({group_name})**\n\n"
+            result += f"✅ In config: {group_in_config}\n"
+            result += f"🤖 Bot is member: {is_member}\n\n"
+            
+            if group_in_config and not is_member:
+                result += "⚠️ **This group appears to be stale** (in config but bot not member)"
+            elif not group_in_config and is_member:
+                result += "ℹ️ **Bot is member but group not in config**"
+            elif group_in_config and is_member:
+                result += "✅ **Group is active and properly configured**"
+            else:
+                result += "❌ **Group not found anywhere**"
+            
+            await update.message.reply_text(result, parse_mode='Markdown')
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid group ID. Must be a number (negative for groups)")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error testing group: {e}")
+
     async def admin_remove_course_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin: Remove a course"""
         user_id = update.effective_user.id
@@ -4397,6 +4427,7 @@ class UniversityRegistrationBot:
         self.application.add_handler(CommandHandler("dev_list_admins", self.dev_list_admins_command))
         self.application.add_handler(CommandHandler("dev_remove_admin", self.dev_remove_admin_command))
         self.application.add_handler(CommandHandler("dev_cleanup_groups", self.dev_cleanup_groups_command))
+        self.application.add_handler(CommandHandler("dev_test_group", self.dev_test_group_command))
         self.application.add_handler(CommandHandler("dev_clearQ_all", self.dev_clearQ_all_command))
         
         # Callback handler for inline keyboards
