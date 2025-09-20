@@ -2158,26 +2158,30 @@ class UniversityRegistrationBot:
                 # Build detailed status for this group
                 group_info = queue_manager.groups.get(group_id, {})
                 group_name = group_info.get('name', f'Group {group_id}')
-                status_text = f"📊 **Detailed Queue Status - {group_name}**\n\n"
+                status_text = f"📊 <b>Detailed Queue Status - {group_name}</b>\n\n"
                 
                 total_registered = 0
                 for course_id, course_name in group_courses.items():
                     queue = queue_manager.group_queues.get(group_id, {}).get(course_id, [])
                     total_registered += len(queue)
                     logger.info(f"Course {course_id}: {len(queue)} registrations")
-                    status_text += f"📚 **{course_name}** ({len(queue)} registered):\n"
+                    status_text += f"📚 <b>{course_name}</b> ({len(queue)} registered):\n"
                     
                     if queue:
                         for i, entry in enumerate(queue, 1):
                             reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%H:%M:%S")
-                            status_text += f"  {i}. {entry['full_name']} (@{entry['username']}) - {reg_time}\n"
+                            logger.info(f"Processing entry {i}: full_name='{entry['full_name']}', username='{entry['username']}'")
+                            # Escape HTML characters in user data
+                            full_name = entry['full_name'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            username = entry['username'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            status_text += f"  {i}. {full_name} (@{username}) - {reg_time}\n"
                     else:
                         status_text += "  No registrations\n"
                     status_text += "\n"
                 
-                status_text += f"**Total registrations in group: {total_registered}**"
+                status_text += f"<b>Total registrations in group: {total_registered}</b>"
                 
-                await query.edit_message_text(status_text, parse_mode='Markdown')
+                await query.edit_message_text(status_text, parse_mode='HTML')
                 return
                 
             except Exception as e:
