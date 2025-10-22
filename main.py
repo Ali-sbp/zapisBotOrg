@@ -421,7 +421,7 @@ class QueueManager:
         """Add user to course queue for a specific group"""
         # Check if user is blacklisted
         if user_id in self.blacklist:
-            return False, "Sorry an error occured. Try again later and don't spam!"
+            return False, "Sorry an error occured. Try again later."
         
         # Validate group exists
         if group_id not in self.groups:
