@@ -118,3 +118,8 @@ test_bot.py
 # Configuration and data files (contain sensitive/runtime data)
 config.json
 queue_data.json
+
+# Backup files and directories
+backups/
+backup.sh
+*.log
