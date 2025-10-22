@@ -115,3 +115,6 @@ runbot.sh
 start_bot.sh
 # Test files (if you don't want them tracked)
 test_bot.py
+# Configuration and data files (contain sensitive/runtime data)
+config.json
+queue_data.json
