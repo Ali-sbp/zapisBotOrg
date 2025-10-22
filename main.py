@@ -78,6 +78,7 @@ class QueueManager:
         self.group_admins = defaultdict(list)  # group_id -> [admin_user_ids]
         self.max_queue_size = 50  # Global default (fallback)
         self.group_queue_sizes = defaultdict(lambda: 50)  # group_id -> queue_size
+        self.blacklist = []  # List of user IDs that are blacklisted from registration
         
         # Load configuration first
         self.load_config()
@@ -122,6 +123,10 @@ class QueueManager:
                     
                 self.group_admins = defaultdict(list, config.get('group_admins', {}))  # Per-group admins
                 self.max_queue_size = config.get('max_queue_size', 50)  # Global default
+                
+                # Load blacklist
+                self.blacklist = config.get('blacklist', [])
+                logger.info(f"Loaded {len(self.blacklist)} blacklisted users")
                 
                 # Load group_queue_sizes with duplicate key handling
                 raw_group_queue_sizes = config.get('group_queue_sizes', {})
@@ -414,6 +419,10 @@ class QueueManager:
     
     def add_to_queue(self, group_id: int, course_id: str, user_id: int, user_name: str, full_name: str) -> tuple[bool, str]:
         """Add user to course queue for a specific group"""
+        # Check if user is blacklisted
+        if user_id in self.blacklist:
+            return False, "Sorry an error occured. Try again later and don't spam!"
+        
         # Validate group exists
         if group_id not in self.groups:
             return False, "Group not found! Bot may need to be re-added to the group."
@@ -444,7 +453,7 @@ class QueueManager:
             'user_id': user_id,
             'username': user_name,
             'full_name': full_name,
-            'registered_at': datetime.now().isoformat(),
+            'registered_at': datetime.now(TIMEZONE).isoformat(),
             'position': len(self.group_queues[group_id][course_id]) + 1
         }
         
@@ -593,6 +602,32 @@ class QueueManager:
         
         return False
     
+    def add_to_blacklist(self, user_id: int) -> tuple[bool, str]:
+        """Add a user to the blacklist (dev only)"""
+        if user_id in self.blacklist:
+            return False, f"User {user_id} is already blacklisted."
+        
+        self.blacklist.append(user_id)
+        self.save_config()
+        return True, f"✅ User {user_id} has been added to the blacklist."
+    
+    def remove_from_blacklist(self, user_id: int) -> tuple[bool, str]:
+        """Remove a user from the blacklist (dev only)"""
+        if user_id not in self.blacklist:
+            return False, f"User {user_id} is not in the blacklist."
+        
+        self.blacklist.remove(user_id)
+        self.save_config()
+        return True, f"✅ User {user_id} has been removed from the blacklist."
+    
+    def is_blacklisted(self, user_id: int) -> bool:
+        """Check if a user is blacklisted"""
+        return user_id in self.blacklist
+    
+    def get_blacklist(self) -> list[int]:
+        """Get the full blacklist"""
+        return self.blacklist.copy()
+    
     def get_admin_groups(self, user_id: int) -> list[str]:
         """Get list of group IDs where the user is an admin"""
         admin_groups = []
@@ -628,7 +663,8 @@ class QueueManager:
                 'dev_users': self.dev_users,          # New dev users
                 'group_admins': dict(self.group_admins),  # Per-group admins
                 'max_queue_size': self.max_queue_size,  # Global default
-                'group_queue_sizes': cleaned_group_queue_sizes  # Per-group queue sizes
+                'group_queue_sizes': cleaned_group_queue_sizes,  # Per-group queue sizes
+                'blacklist': self.blacklist  # Blacklisted user IDs
             }
             
             # Save group configurations
@@ -1378,7 +1414,7 @@ class UniversityRegistrationBot:
             queue = queue_manager.group_queues[group_id][course_id]
             for entry in queue:
                 if entry['user_id'] == user_id:
-                    reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%d.%m %H:%M")
+                    reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%d.%m %H:%M:%S")
                     user_registrations.append(
                         f"📚 **{course_name}**: {entry['full_name']} (поз. {entry['position']}) - {reg_time}"
                     )
@@ -1413,7 +1449,7 @@ class UniversityRegistrationBot:
             message += "👥 **Записанные студенты:**\n"
             
             for i, entry in enumerate(queue, 1):
-                reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%d.%m %H:%M")
+                reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%d.%m %H:%M:%S")
                 registered_by = entry['username'] if entry['username'] != "Unknown" else f"User {entry['user_id']}"
                 message += f"{i}\\. **{entry['full_name']}** \\(от @{registered_by}\\) - {reg_time}\n"
             
@@ -3735,6 +3771,85 @@ class UniversityRegistrationBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Error testing group: {e}")
 
+    async def dev_blacklist_add_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Dev: Add a user to the blacklist"""
+        user_id = update.effective_user.id
+        if not queue_manager.is_dev(user_id):
+            await update.message.reply_text("❌ Access denied. Dev privileges required.")
+            return
+        
+        if len(context.args) != 1:
+            await update.message.reply_text(
+                "**Usage:** /dev_blacklist_add <user_id>\n"
+                "**Example:** /dev_blacklist_add 123456789\n\n"
+                "💡 *Users can find their ID by messaging @userinfobot*",
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            target_user_id = int(context.args[0])
+            
+            # Prevent blacklisting devs
+            if queue_manager.is_dev(target_user_id):
+                await update.message.reply_text("❌ Cannot blacklist a dev user.")
+                return
+            
+            success, message = queue_manager.add_to_blacklist(target_user_id)
+            await update.message.reply_text(message)
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID. Must be a number.")
+
+    async def dev_blacklist_remove_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Dev: Remove a user from the blacklist"""
+        user_id = update.effective_user.id
+        if not queue_manager.is_dev(user_id):
+            await update.message.reply_text("❌ Access denied. Dev privileges required.")
+            return
+        
+        if len(context.args) != 1:
+            await update.message.reply_text(
+                "**Usage:** /dev_blacklist_remove <user_id>\n"
+                "**Example:** /dev_blacklist_remove 123456789",
+                parse_mode='Markdown'
+            )
+            return
+        
+        try:
+            target_user_id = int(context.args[0])
+            success, message = queue_manager.remove_from_blacklist(target_user_id)
+            await update.message.reply_text(message)
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID. Must be a number.")
+
+    async def dev_blacklist_list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Dev: List all blacklisted users"""
+        user_id = update.effective_user.id
+        if not queue_manager.is_dev(user_id):
+            await update.message.reply_text("❌ Access denied. Dev privileges required.")
+            return
+        
+        blacklist = queue_manager.get_blacklist()
+        
+        if not blacklist:
+            await update.message.reply_text("📋 The blacklist is empty.")
+            return
+        
+        message = f"🚫 **Blacklisted Users ({len(blacklist)}):**\n\n"
+        for bl_user_id in blacklist:
+            # Try to get user info
+            try:
+                user_name = await self.get_user_display_name(bl_user_id)
+                message += f"• {user_name} (ID: `{bl_user_id}`)\n"
+            except:
+                message += f"• User ID: `{bl_user_id}`\n"
+        
+        message += f"\n💡 *Use /dev_blacklist_remove <user_id> to remove a user from the blacklist*"
+        
+        await update.message.reply_text(message, parse_mode='Markdown')
+
     async def admin_remove_course_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin: Remove a course"""
         user_id = update.effective_user.id
@@ -4290,6 +4405,9 @@ class UniversityRegistrationBot:
                     BotCommand("dev_list_admins", "Дев: Список админов"),
                     BotCommand("dev_remove_admin", "Дев: Удалить админа"),
                     BotCommand("dev_cleanup_groups", "Дев: Очистить группы"),
+                    BotCommand("dev_blacklist_add", "Дев: Добавить в черный список"),
+                    BotCommand("dev_blacklist_remove", "Дев: Удалить из черного списка"),
+                    BotCommand("dev_blacklist_list", "Дев: Показать черный список"),
                 ]
                 await self.application.bot.set_my_commands(
                     dev_commands,
@@ -4471,6 +4589,9 @@ class UniversityRegistrationBot:
         self.application.add_handler(CommandHandler("dev_cleanup_groups", self.dev_cleanup_groups_command))
         self.application.add_handler(CommandHandler("dev_test_group", self.dev_test_group_command))
         self.application.add_handler(CommandHandler("dev_clearQ_all", self.dev_clearQ_all_command))
+        self.application.add_handler(CommandHandler("dev_blacklist_add", self.dev_blacklist_add_command))
+        self.application.add_handler(CommandHandler("dev_blacklist_remove", self.dev_blacklist_remove_command))
+        self.application.add_handler(CommandHandler("dev_blacklist_list", self.dev_blacklist_list_command))
         
         # Callback handler for inline keyboards
         self.application.add_handler(CallbackQueryHandler(self.callback_handler))
