@@ -1838,6 +1838,132 @@ class UniversityRegistrationBot:
                 await query.edit_message_text("❌ Failed to remove group data.")
             return
         
+        # Handle dev remove registration callbacks
+        if data.startswith("dev_remove_reg_group_"):
+            group_id = int(data.replace("dev_remove_reg_group_", ""))
+            user_id = query.from_user.id
+            if not queue_manager.is_dev(user_id):
+                await query.edit_message_text("❌ Access denied. Dev privileges required.")
+                return
+            
+            # Show courses in this group with registrations
+            group_info = queue_manager.groups.get(group_id, {})
+            group_name = group_info.get('name', f'Group {group_id}')
+            group_courses = queue_manager.get_group_courses(group_id)
+            
+            keyboard = []
+            for course_id, course_name in group_courses.items():
+                queue = queue_manager.group_queues[group_id].get(course_id, [])
+                if queue:
+                    keyboard.append([InlineKeyboardButton(
+                        f"{course_name} ({len(queue)} registrations)",
+                        callback_data=f"dev_remove_reg_course_{group_id}_{course_id}"
+                    )])
+            
+            if not keyboard:
+                await query.edit_message_text(f"📋 No registrations found in {group_name}.")
+                return
+            
+            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"🗑️ **Remove Registration - {group_name}**\n\n"
+                f"Select a course:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return
+        
+        if data.startswith("dev_remove_reg_course_"):
+            parts = data.replace("dev_remove_reg_course_", "").split("_", 1)
+            if len(parts) != 2:
+                await query.edit_message_text("❌ Invalid callback data.")
+                return
+            
+            group_id = int(parts[0])
+            course_id = parts[1]
+            user_id = query.from_user.id
+            
+            if not queue_manager.is_dev(user_id):
+                await query.edit_message_text("❌ Access denied. Dev privileges required.")
+                return
+            
+            # Show registrations for this course
+            group_courses = queue_manager.get_group_courses(group_id)
+            course_name = group_courses.get(course_id, course_id)
+            queue = queue_manager.group_queues[group_id].get(course_id, [])
+            
+            if not queue:
+                await query.edit_message_text(f"📋 No registrations found for {course_name}.")
+                return
+            
+            keyboard = []
+            for i, entry in enumerate(queue):
+                reg_time = datetime.fromisoformat(entry['registered_at']).strftime("%d.%m %H:%M")
+                registered_by = entry['username'] if entry['username'] != "Unknown" else f"User {entry['user_id']}"
+                button_text = f"{entry['full_name']} (by @{registered_by}) - {reg_time}"
+                keyboard.append([InlineKeyboardButton(
+                    button_text,
+                    callback_data=f"dev_confirm_remove_reg_{group_id}_{course_id}_{i}"
+                )])
+            
+            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"🗑️ **Remove Registration**\n\n"
+                f"**Course:** {course_name}\n"
+                f"**Total registrations:** {len(queue)}\n\n"
+                f"Select a registration to remove:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            return
+        
+        if data.startswith("dev_confirm_remove_reg_"):
+            parts = data.replace("dev_confirm_remove_reg_", "").split("_")
+            if len(parts) != 3:
+                await query.edit_message_text("❌ Invalid callback data.")
+                return
+            
+            group_id = int(parts[0])
+            course_id = parts[1]
+            entry_index = int(parts[2])
+            user_id = query.from_user.id
+            
+            if not queue_manager.is_dev(user_id):
+                await query.edit_message_text("❌ Access denied. Dev privileges required.")
+                return
+            
+            # Remove the registration
+            group_courses = queue_manager.get_group_courses(group_id)
+            course_name = group_courses.get(course_id, course_id)
+            queue = queue_manager.group_queues[group_id].get(course_id, [])
+            
+            if entry_index >= len(queue):
+                await query.edit_message_text("❌ Invalid registration index.")
+                return
+            
+            removed_entry = queue[entry_index]
+            queue_manager.group_queues[group_id][course_id].pop(entry_index)
+            
+            # Update positions
+            for i, entry in enumerate(queue_manager.group_queues[group_id][course_id]):
+                entry['position'] = i + 1
+            
+            queue_manager.save_data()
+            
+            await query.edit_message_text(
+                f"✅ **Registration Removed**\n\n"
+                f"**Course:** {course_name}\n"
+                f"**Removed:** {removed_entry['full_name']}\n"
+                f"**Registered by:** @{removed_entry['username']}\n"
+                f"**Remaining registrations:** {len(queue_manager.group_queues[group_id][course_id])}",
+                parse_mode='Markdown'
+            )
+            return
+        
         if data.startswith("select_group_"):
             # Handle group selection
             selected_group_id = int(data.replace("select_group_", ""))
@@ -1871,8 +1997,20 @@ class UniversityRegistrationBot:
             await query.edit_message_text(success_message, parse_mode='Markdown')
             return
         
-        if data.startswith("register_"):
+        # Handle register_courses_ BEFORE register_ to avoid conflict
+        if data.startswith("register_courses_"):
+            # This will be processed later with other group management callbacks
+            pass
+        elif data.startswith("register_"):
             course_id = data.replace("register_", "")
+            
+            # Get user's associated group
+            user_id = query.from_user.id
+            associated_group = queue_manager.get_user_group(user_id)
+            
+            # Use associated group if no group context from chat
+            if not group_id:
+                group_id = associated_group
             
             # Validate group context
             if not group_id:
@@ -1882,7 +2020,7 @@ class UniversityRegistrationBot:
             # Validate course exists in this group
             group_courses = queue_manager.get_group_courses(group_id)
             if course_id not in group_courses:
-                await query.edit_message_text("❌ Недопустимый курс для этой группы!")
+                await query.edit_message_text(f"❌ Недопустимый курс для этой группы! (group_id: {group_id}, course_id: {course_id})")
                 return
             
             # Ask for full name
@@ -3850,6 +3988,41 @@ class UniversityRegistrationBot:
         
         await update.message.reply_text(message, parse_mode='Markdown')
 
+    async def dev_remove_registration_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Dev: Remove any registration from any queue"""
+        user_id = update.effective_user.id
+        if not queue_manager.is_dev(user_id):
+            await update.message.reply_text("❌ Access denied. Dev privileges required.")
+            return
+        
+        # Show group selection
+        keyboard = []
+        for group_id, group_info in queue_manager.groups.items():
+            group_name = group_info.get('name', f'Group {group_id}')
+            group_courses = queue_manager.get_group_courses(group_id)
+            total_registrations = sum(len(queue_manager.group_queues[group_id].get(course_id, [])) 
+                                     for course_id in group_courses)
+            
+            if total_registrations > 0:
+                keyboard.append([InlineKeyboardButton(
+                    f"{group_name} ({total_registrations} registrations)",
+                    callback_data=f"dev_remove_reg_group_{group_id}"
+                )])
+        
+        if not keyboard:
+            await update.message.reply_text("📋 No registrations found in any group.")
+            return
+        
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "🗑️ **Remove Registration**\n\n"
+            "Select a group to view registrations:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
     async def admin_remove_course_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin: Remove a course"""
         user_id = update.effective_user.id
@@ -4408,6 +4581,7 @@ class UniversityRegistrationBot:
                     BotCommand("dev_blacklist_add", "Дев: Добавить в черный список"),
                     BotCommand("dev_blacklist_remove", "Дев: Удалить из черного списка"),
                     BotCommand("dev_blacklist_list", "Дев: Показать черный список"),
+                    BotCommand("dev_remove_registration", "Дев: Удалить любую запись"),
                 ]
                 await self.application.bot.set_my_commands(
                     dev_commands,
@@ -4592,6 +4766,7 @@ class UniversityRegistrationBot:
         self.application.add_handler(CommandHandler("dev_blacklist_add", self.dev_blacklist_add_command))
         self.application.add_handler(CommandHandler("dev_blacklist_remove", self.dev_blacklist_remove_command))
         self.application.add_handler(CommandHandler("dev_blacklist_list", self.dev_blacklist_list_command))
+        self.application.add_handler(CommandHandler("dev_remove_registration", self.dev_remove_registration_command))
         
         # Callback handler for inline keyboards
         self.application.add_handler(CallbackQueryHandler(self.callback_handler))
@@ -4735,11 +4910,47 @@ class UniversityRegistrationBot:
         )
     
     async def handle_register_courses_callback(self, query, group_id, context):
-        """Handle register courses callback"""
-        await query.edit_message_text("📝 Открываю регистрацию... Используйте /register для записи на курсы.")
+        """Handle register courses callback - show course selection menu"""
+        user_id = query.from_user.id
         
-        # Trigger the register command functionality
-        # We could redirect to existing register logic here
+        # Associate user with this group
+        queue_manager.user_groups[user_id] = group_id
+        
+        # Get courses for this group
+        group_courses = queue_manager.get_group_courses(group_id)
+        if not group_courses:
+            await query.edit_message_text("� Нет доступных курсов в этой группе.")
+            return
+        
+        # Create inline keyboard with courses
+        keyboard = []
+        for course_id, course_name in group_courses.items():
+            # Check if registration is open
+            is_open = queue_manager.is_course_registration_open(group_id, course_id)
+            count = len(queue_manager.group_queues[group_id].get(course_id, []))
+            
+            if is_open:
+                status = "🟢"
+            else:
+                status = "🔴"
+            
+            button_text = f"{course_name} ({count}) {status}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"register_{course_id}")])
+        
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        group_info = queue_manager.groups.get(group_id, {})
+        group_name = group_info.get('name', f'Group {group_id}')
+        
+        message = (
+            f"📝 **Регистрация на курсы - {group_name}**\n\n"
+            f"Выберите курс для записи:\n"
+            f"🟢 = Открыто | 🔴 = Закрыто\n\n"
+            f"💡 *Вы можете записать себя или друзей*"
+        )
+        
+        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
     
     async def handle_help_callback(self, query, group_id, context):
         """Handle help callback"""
