@@ -123,3 +123,4 @@ queue_data.json
 backups/
 backup.sh
 *.log
+.gitignore
