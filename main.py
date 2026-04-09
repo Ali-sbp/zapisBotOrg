@@ -653,6 +653,22 @@ class QueueManager:
                 admin_groups.append(group_id)
         return admin_groups
     
+    async def get_accessible_groups(self, bot, user_id: int) -> dict:
+        """Return subset of self.groups the user is a member of.
+        Dev users bypass the check and see all groups."""
+        if self.is_dev(user_id):
+            return self.groups
+
+        accessible = {}
+        for group_id, group_info in self.groups.items():
+            try:
+                member = await bot.get_chat_member(chat_id=group_id, user_id=user_id)
+                if member.status in ("member", "administrator", "creator", "restricted"):
+                    accessible[group_id] = group_info
+            except Exception:
+                pass  # user not in group or group inaccessible — skip
+        return accessible
+
     def get_group_queue_size(self, group_id: int) -> int:
         """Get the queue size limit for a specific group"""
         return self.group_queue_sizes.get(group_id, self.max_queue_size)
@@ -1047,39 +1063,42 @@ class UniversityRegistrationBot:
         
         if not current_group_id:
             # User has no group - show initial group selection menu
-            await self.show_group_selection_menu(update)
+            await self.show_group_selection_menu(update, context.bot)
             return
         
         # User has a group - show current group status with options
         await self.show_current_group_menu(update, current_group_id)
     
-    async def show_group_selection_menu(self, update: Update):
-        """Show available groups for user to choose from"""
-        available_groups = queue_manager.groups
-        
+    async def show_group_selection_menu(self, update: Update, bot=None):
+        """Show available groups for user to choose from (only groups the user is a member of)"""
+        user_id = update.effective_user.id
+        if bot is not None:
+            available_groups = await queue_manager.get_accessible_groups(bot, user_id)
+        else:
+            available_groups = queue_manager.groups
+
         if not available_groups:
             await update.message.reply_text(
                 "❌ На данный момент нет доступных групп.\n"
-                "Обратитесь к администратору для добавления групп."
+                "Убедитесь, что вы вступили в группу, и обратитесь к администратору."
             )
             return
-        
+
         if len(available_groups) == 1:
             # Only one group available, auto-associate
             group_id = list(available_groups.keys())[0]
-            user_id = update.effective_user.id
             await self.associate_user_with_group(user_id, group_id)
-            
+
             group_info = available_groups[group_id]
             group_name = group_info.get('name', f'Group {group_id}')
-            
+
             await update.message.reply_text(
                 f"✅ Вы автоматически подключены к группе: **{group_name}**\n\n"
                 f"Теперь используйте /list для просмотра курсов или /register для записи!",
                 parse_mode='Markdown'
             )
             return
-        
+
         # Multiple groups - show selection menu
         keyboard = []
         for group_id, group_info in available_groups.items():
@@ -1087,16 +1106,16 @@ class UniversityRegistrationBot:
             course_count = len(queue_manager.get_group_courses(int(group_id)))
             button_text = f"📚 {group_name} ({course_count} курс{'ов' if course_count != 1 else ''})"
             keyboard.append([InlineKeyboardButton(button_text, callback_data=f"select_group_{group_id}")])
-        
+
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         message_text = (
             "📍 **Выберите вашу группу курса:**\n\n"
             "Выберите группу, к которой вы хотите подключиться для записи на курсы.\n"
             "💡 *После выбора группы вы сможете записаться на курсы в этой группе.*"
         )
-        
+
         await update.message.reply_text(
             message_text,
             reply_markup=reply_markup,
@@ -1159,7 +1178,7 @@ class UniversityRegistrationBot:
         
         if not group_id:
             # Show group selection menu if no group is associated
-            await self.show_group_selection_menu(update)
+            await self.show_group_selection_menu(update, context.bot)
             return
         
         # Show personalized help text in private message
@@ -1172,11 +1191,11 @@ class UniversityRegistrationBot:
     async def list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /list command - show all courses with their schedules and status"""
         group_id, context_type, is_private = self.get_chat_context(update)
-        
+
         if not group_id:
             if is_private:
                 # In private message, offer group selection
-                await self.show_group_selection_menu(update)
+                await self.show_group_selection_menu(update, context.bot)
             else:
                 # In group chat, show error
                 await update.message.reply_text(
@@ -1243,9 +1262,9 @@ class UniversityRegistrationBot:
                 "❌ Вы не связаны ни с одной группой!\n\n"
                 "Выберите группу из доступных:"
             )
-            await self.show_group_selection_menu(update)
+            await self.show_group_selection_menu(update, context.bot)
             return
-        
+
         # Check if ANY course has registration open for this group
         group_courses = queue_manager.get_group_courses(group_id)
         if not group_courses:
@@ -1299,7 +1318,7 @@ class UniversityRegistrationBot:
     async def unregister_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /unregister command - show course menu for unregistration (private messages only)"""
         group_id, context_type, is_private = self.get_chat_context(update)
-        
+
         # Enforce private message only
         if not is_private:
             await update.message.reply_text(
@@ -1313,9 +1332,9 @@ class UniversityRegistrationBot:
                 "❌ Вы не связаны ни с одной группой!\n\n"
                 "Выберите группу из доступных:"
             )
-            await self.show_group_selection_menu(update)
+            await self.show_group_selection_menu(update, context.bot)
             return
-        
+
         user_id = update.effective_user.id
         group_courses = queue_manager.get_group_courses(group_id)
         
@@ -1359,11 +1378,11 @@ class UniversityRegistrationBot:
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command - show course selection menu"""
         group_id, context_type, is_private = self.get_chat_context(update)
-        
+
         if not group_id:
             if is_private:
                 # In private message, offer group selection
-                await self.show_group_selection_menu(update)
+                await self.show_group_selection_menu(update, context.bot)
             else:
                 # In group chat, show error
                 await update.message.reply_text(
@@ -4832,39 +4851,39 @@ class UniversityRegistrationBot:
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
     
     async def handle_switch_group_callback(self, query, context):
-        """Handle switch group callback - show available groups"""
+        """Handle switch group callback - show groups the user is a member of"""
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        
+
         user_id = query.from_user.id
         current_group_id = queue_manager.get_user_group(user_id)
-        
-        available_groups = queue_manager.groups
-        
-        if len(available_groups) <= 1:
+
+        accessible_groups = await queue_manager.get_accessible_groups(context.bot, user_id)
+
+        # Exclude current group from the list
+        other_groups = {gid: info for gid, info in accessible_groups.items() if gid != current_group_id}
+
+        if not other_groups:
             await query.edit_message_text(
                 "❌ Нет других доступных групп для переключения."
             )
             return
-        
+
         keyboard = []
-        for group_id, group_info in available_groups.items():
-            if group_id == current_group_id:
-                continue  # Skip current group
-                
+        for group_id, group_info in other_groups.items():
             group_name = group_info.get('name', f'Group {group_id}')
             course_count = len(queue_manager.get_group_courses(group_id))
-            
+
             keyboard.append([
                 InlineKeyboardButton(
                     f"📚 {group_name} ({course_count} курсов)",
                     callback_data=f"confirm_switch_{group_id}"
                 )
             ])
-        
+
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_switch")])
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         await query.edit_message_text(
             "🔄 **Выберите новую группу:**\n\n"
             "⚠️ *После смены группы ваш контекст изменится на выбранную группу.*",
