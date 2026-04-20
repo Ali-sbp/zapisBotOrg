@@ -9,8 +9,8 @@ import json
 import logging
 import asyncio
 from datetime import datetime, time, timedelta
-from typing import Dict, List, Set
-from collections import defaultdict
+from typing import Any, Dict, List, Set
+from collections import defaultdict, deque
 
 import pytz
 from dotenv import load_dotenv
@@ -42,6 +42,12 @@ logging.basicConfig(
     level=logging.INFO if os.getenv('DEBUG', 'False').lower() == 'true' else logging.WARNING
 )
 logger = logging.getLogger(__name__)
+audit_logger = logging.getLogger("registration_audit")
+audit_logger.setLevel(logging.INFO)
+
+# Reduce noisy request logging and avoid leaking the bot token in journal URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Bot configuration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -58,6 +64,45 @@ if DEV_USER_IDS_ENV:
 REGISTRATION_DAY = int(os.getenv('REGISTRATION_DAY', 2))  # Wednesday = 2
 REGISTRATION_TIME = os.getenv('REGISTRATION_TIME', '20:00')
 TIMEZONE = pytz.timezone('Europe/Moscow')  # Adjust to your university's timezone
+
+ACTIVITY_THRESHOLDS = {
+    'register_entrypoint': {'limit': 5, 'window_seconds': 30, 'reason': 'register_entrypoint_burst'},
+    'register_course_click': {'limit': 6, 'window_seconds': 30, 'reason': 'register_course_click_burst'},
+    'register_name_submit': {'limit': 6, 'window_seconds': 60, 'reason': 'register_name_submit_burst'},
+    'register_success': {'limit': 3, 'window_seconds': 60, 'reason': 'high_registration_rate'},
+    'register_duplicate_name': {'limit': 3, 'window_seconds': 30, 'reason': 'duplicate_name_burst'},
+}
+
+
+def _format_audit_value(value: Any) -> str | None:
+    """Return a stable, grep-friendly representation for audit log fields."""
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+
+    if isinstance(value, datetime):
+        value = value.isoformat()
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    text = " ".join(text.split())
+    if any(char in text for char in (' ', '"', '=')):
+        return json.dumps(text, ensure_ascii=False)
+    return text
+
+
+def audit_event(event: str, **fields: Any) -> None:
+    """Write a structured audit line that is easy to grep in journalctl."""
+    parts = [f"event={event}"]
+    for key, value in fields.items():
+        formatted = _format_audit_value(value)
+        if formatted is not None:
+            parts.append(f"{key}={formatted}")
+    audit_logger.info("audit %s", " ".join(parts))
 
 # Data storage (in production, use a proper database)
 class QueueManager:
@@ -422,36 +467,67 @@ class QueueManager:
         
         logger.info(f"Initialized new group {group_id} ({group_name}) with {len(default_courses)} default courses")
     
-    def add_to_queue(self, group_id: int, course_id: str, user_id: int, user_name: str, full_name: str) -> tuple[bool, str]:
+    def add_to_queue(
+        self,
+        group_id: int,
+        course_id: str,
+        user_id: int,
+        user_name: str,
+        full_name: str,
+        audit_meta: Dict[str, Any] | None = None,
+    ) -> tuple[bool, str, str]:
         """Add user to course queue for a specific group"""
+        audit_fields = {
+            'user_id': user_id,
+            'username': user_name,
+            'group_id': group_id,
+            'course_id': course_id,
+            'full_name': full_name,
+        }
+        if audit_meta:
+            audit_fields.update(audit_meta)
+
+        audit_event("register_attempt", **audit_fields)
+
         # Check if user is blacklisted
         if user_id in self.blacklist:
-            return False, "Sorry an error occured. Try again later."
+            audit_event("register_rejected_blacklist", **audit_fields)
+            return False, "Sorry an error occured. Try again later.", "blacklisted"
         
         # Validate group exists
         if group_id not in self.groups:
-            return False, "Group not found! Bot may need to be re-added to the group."
+            audit_event("register_rejected_group_not_found", **audit_fields)
+            return False, "Group not found! Bot may need to be re-added to the group.", "group_not_found"
         
         # Check if registration is open
         if not self.group_registration_status.get(group_id, {}).get(course_id, False):
             course_name = self.group_courses.get(group_id, {}).get(course_id, course_id)
-            return False, f"Registration for {course_name} is currently closed!"
+            audit_event("register_rejected_closed", course_name=course_name, **audit_fields)
+            return False, f"Registration for {course_name} is currently closed!", "registration_closed"
         
         # Validate course exists in this group
         if course_id not in self.group_courses.get(group_id, {}):
-            return False, "Invalid course selected!"
+            audit_event("register_rejected_invalid_course", **audit_fields)
+            return False, "Invalid course selected!", "invalid_course"
         
         # Check if this name is already registered for this course in this group
         for entry in self.group_queues[group_id][course_id]:
             if entry['full_name'].lower() == full_name.lower():
                 registered_by = entry['username'] if entry['username'] != "Unknown" else f"User {entry['user_id']}"
                 course_name = self.group_courses[group_id][course_id]
-                return False, f"Имя '{full_name}' уже записано на {course_name} пользователем @{registered_by}!"
+                audit_event(
+                    "register_rejected_duplicate_name",
+                    course_name=course_name,
+                    duplicate_owner=registered_by,
+                    **audit_fields,
+                )
+                return False, f"Имя '{full_name}' уже записано на {course_name} пользователем @{registered_by}!", "duplicate_name"
         
         # Check queue size limit
         max_size = self.get_group_queue_size(group_id)
         if len(self.group_queues[group_id][course_id]) >= max_size:
-            return False, f"Очередь полная! Максимум {max_size} записей разрешено."
+            audit_event("register_rejected_queue_full", max_size=max_size, **audit_fields)
+            return False, f"Очередь полная! Максимум {max_size} записей разрешено.", "queue_full"
         
         # Add user to queue
         entry = {
@@ -466,7 +542,14 @@ class QueueManager:
         self.save_data()
         
         course_name = self.group_courses[group_id][course_id]
-        return True, f"Успешно записали '{full_name}' на {course_name}! Позиция: {entry['position']}"
+        audit_event(
+            "register_success",
+            course_name=course_name,
+            position=entry['position'],
+            registered_at=entry['registered_at'],
+            **audit_fields,
+        )
+        return True, f"Успешно записали '{full_name}' на {course_name}! Позиция: {entry['position']}", "success"
     
     def get_queue_status(self, group_id: int, course_id: str = None) -> str:
         """Get queue status for a course or all courses in a specific group"""
@@ -545,11 +628,18 @@ class QueueManager:
             return
         user_id = self.auto_register_user_id
         username = self.auto_register_username or "dev"
-        success, msg = self.add_to_queue(group_id, course_id, user_id, username, "ali")
+        success, msg, reason = self.add_to_queue(
+            group_id,
+            course_id,
+            user_id,
+            username,
+            "ali",
+            audit_meta={'source': 'auto_register'},
+        )
         if success:
             logger.info(f"Auto-registered 'ali' for {course_id} in group {group_id}")
         else:
-            logger.info(f"Auto-register skipped for {course_id} in group {group_id}: {msg}")
+            logger.info(f"Auto-register skipped for {course_id} in group {group_id}: {reason} - {msg}")
 
     def is_course_registration_open(self, group_id: int, course_id: str) -> bool:
         """Check if registration is open for a specific course in a specific group"""
@@ -941,6 +1031,8 @@ class UniversityRegistrationBot:
         self.application = None
         # State tracking for multi-step conversations
         self.user_states = {}  # user_id -> conversation state
+        self.activity_windows = defaultdict(lambda: defaultdict(deque))
+        self.activity_alert_cooldowns = {}
         
     def set_user_state(self, user_id: int, state: str, data: dict = None):
         """Set conversation state for a user"""
@@ -957,6 +1049,55 @@ class UniversityRegistrationBot:
     def clear_user_state(self, user_id: int):
         """Clear conversation state for a user"""
         self.user_states.pop(user_id, None)
+
+    def track_activity(
+        self,
+        action: str,
+        user_id: int,
+        username: str | None = None,
+        group_id: int | None = None,
+        course_id: str | None = None,
+        full_name: str | None = None,
+        source: str | None = None,
+        update_id: int | None = None,
+    ) -> None:
+        """Passively track bursts of registration activity for later inspection."""
+        threshold = ACTIVITY_THRESHOLDS.get(action)
+        if not threshold:
+            return
+
+        now = datetime.now(TIMEZONE)
+        activity_window = self.activity_windows[user_id][action]
+        activity_window.append(now)
+
+        cutoff = now - timedelta(seconds=threshold['window_seconds'])
+        while activity_window and activity_window[0] < cutoff:
+            activity_window.popleft()
+
+        count = len(activity_window)
+        if count < threshold['limit']:
+            return
+
+        cooldown_key = (user_id, action, group_id, course_id, threshold['reason'])
+        last_alert = self.activity_alert_cooldowns.get(cooldown_key)
+        if last_alert and (now - last_alert).total_seconds() < threshold['window_seconds']:
+            return
+
+        self.activity_alert_cooldowns[cooldown_key] = now
+        audit_event(
+            "suspicious_activity",
+            user_id=user_id,
+            username=username,
+            group_id=group_id,
+            course_id=course_id,
+            full_name=full_name,
+            action=action,
+            reason=threshold['reason'],
+            count=count,
+            window_seconds=threshold['window_seconds'],
+            source=source,
+            update_id=update_id,
+        )
     
     async def get_user_display_name(self, user_id: int) -> str:
         """Get user display name (username or full name or user ID)"""
@@ -1041,6 +1182,15 @@ class UniversityRegistrationBot:
         """Handle /start command"""
         user_id = update.effective_user.id
         group_id, context_type, is_private = self.get_chat_context(update)
+        audit_event(
+            "start_command_received",
+            user_id=user_id,
+            username=update.effective_user.username,
+            group_id=group_id,
+            context_type=context_type,
+            is_private=is_private,
+            update_id=getattr(update, 'update_id', None),
+        )
         
         # Set up personalized commands for this user
         await self.setup_user_commands(user_id)
@@ -1246,10 +1396,37 @@ class UniversityRegistrationBot:
     
     async def register_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /register command - show course menu (private messages only)"""
+        user = update.effective_user
         group_id, context_type, is_private = self.get_chat_context(update)
+        update_id = getattr(update, 'update_id', None)
+
+        audit_event(
+            "register_command_received",
+            user_id=user.id,
+            username=user.username,
+            group_id=group_id,
+            context_type=context_type,
+            is_private=is_private,
+            update_id=update_id,
+        )
+        self.track_activity(
+            'register_entrypoint',
+            user.id,
+            username=user.username,
+            group_id=group_id,
+            source='register_command',
+            update_id=update_id,
+        )
         
         # Enforce private message only for registration
         if not is_private:
+            audit_event(
+                "register_command_blocked_private_required",
+                user_id=user.id,
+                username=user.username,
+                group_id=group_id,
+                update_id=update_id,
+            )
             await update.message.reply_text(
                 "🔒 Регистрация доступна только в личных сообщениях!\n"
                 "📱 Отправьте мне /register в личные сообщения."
@@ -1258,6 +1435,12 @@ class UniversityRegistrationBot:
         
         # Check if user has associated group
         if not group_id:
+            audit_event(
+                "register_command_blocked_no_group",
+                user_id=user.id,
+                username=user.username,
+                update_id=update_id,
+            )
             await update.message.reply_text(
                 "❌ Вы не связаны ни с одной группой!\n\n"
                 "Выберите группу из доступных:"
@@ -1268,6 +1451,13 @@ class UniversityRegistrationBot:
         # Check if ANY course has registration open for this group
         group_courses = queue_manager.get_group_courses(group_id)
         if not group_courses:
+            audit_event(
+                "register_command_no_courses",
+                user_id=user.id,
+                username=user.username,
+                group_id=group_id,
+                update_id=update_id,
+            )
             await update.message.reply_text("📚 Нет доступных курсов в вашей группе.")
             return
         
@@ -1278,6 +1468,16 @@ class UniversityRegistrationBot:
             next_open = self.get_next_registration_time(group_id)
             group_info = queue_manager.groups.get(group_id, {})
             group_name = group_info.get('name', f'Group {group_id}')
+            audit_event(
+                "register_command_no_open_courses",
+                user_id=user.id,
+                username=user.username,
+                group_id=group_id,
+                group_name=group_name,
+                total_courses=len(group_courses),
+                next_open=next_open,
+                update_id=update_id,
+            )
             await update.message.reply_text(
                 f"🔒 Регистрация сейчас закрыта для всех курсов в {group_name}.\n"
                 f"Следующее открытие: {next_open}",
@@ -1308,6 +1508,18 @@ class UniversityRegistrationBot:
                 message_text += f"ℹ️ *{closed_count} курса сейчас закрыты*\n"
             else:  # 5+
                 message_text += f"ℹ️ *{closed_count} курсов сейчас закрыты*\n"
+
+        audit_event(
+            "register_menu_shown",
+            user_id=user.id,
+            username=user.username,
+            group_id=group_id,
+            group_name=group_name,
+            open_course_count=len(open_courses),
+            total_course_count=len(group_courses),
+            source='register_command',
+            update_id=update_id,
+        )
         
         await update.message.reply_text(
             message_text,
@@ -2050,17 +2262,50 @@ class UniversityRegistrationBot:
             
             # Validate group context
             if not group_id:
+                audit_event(
+                    "register_course_click_blocked_no_group",
+                    user_id=user_id,
+                    username=query.from_user.username,
+                    course_id=course_id,
+                    update_id=getattr(update, 'update_id', None),
+                )
                 await query.edit_message_text("❌ Группа не найдена! Повторите попытку после взаимодействия с ботом в группе курса.")
                 return
             
             # Validate course exists in this group
             group_courses = queue_manager.get_group_courses(group_id)
             if course_id not in group_courses:
+                audit_event(
+                    "register_course_click_blocked_invalid_course",
+                    user_id=user_id,
+                    username=query.from_user.username,
+                    group_id=group_id,
+                    course_id=course_id,
+                    update_id=getattr(update, 'update_id', None),
+                )
                 await query.edit_message_text(f"❌ Недопустимый курс для этой группы! (group_id: {group_id}, course_id: {course_id})")
                 return
             
             # Ask for full name
             course_name = group_courses[course_id]
+            audit_event(
+                "register_course_clicked",
+                user_id=user_id,
+                username=query.from_user.username,
+                group_id=group_id,
+                course_id=course_id,
+                course_name=course_name,
+                update_id=getattr(update, 'update_id', None),
+            )
+            self.track_activity(
+                'register_course_click',
+                user_id,
+                username=query.from_user.username,
+                group_id=group_id,
+                course_id=course_id,
+                source='callback_query',
+                update_id=getattr(update, 'update_id', None),
+            )
             await query.edit_message_text(
                 f"📝 Вы выбрали: **{course_name}**\n\n"
                 "Ответьте с полным именем для записи:\n"
@@ -2812,29 +3057,93 @@ class UniversityRegistrationBot:
         full_name = update.message.text.strip()
         course_id = context.user_data.get('selected_course')
         selected_group_id = context.user_data.get('selected_group')
+        update_id = getattr(update, 'update_id', None)
         
         # Validate we have all required data
         if not course_id or not selected_group_id or len(full_name) < 2:
+            audit_event(
+                "register_name_rejected_invalid",
+                user_id=user.id,
+                username=user.username,
+                group_id=selected_group_id,
+                course_id=course_id,
+                full_name=full_name,
+                update_id=update_id,
+            )
             await update.message.reply_text("Пожалуйста, укажите правильное полное имя.")
             return
         
         # Validate user has access to this group
         if group_id != selected_group_id:
+            audit_event(
+                "register_name_rejected_group_mismatch",
+                user_id=user.id,
+                username=user.username,
+                group_id=group_id,
+                expected_group_id=selected_group_id,
+                course_id=course_id,
+                full_name=full_name,
+                update_id=update_id,
+            )
             await update.message.reply_text("❌ Ошибка: несоответствие группы! Начните регистрацию сначала.")
             context.user_data.clear()
             return
+
+        audit_event(
+            "register_name_received",
+            user_id=user.id,
+            username=user.username,
+            group_id=selected_group_id,
+            course_id=course_id,
+            full_name=full_name,
+            update_id=update_id,
+        )
+        self.track_activity(
+            'register_name_submit',
+            user.id,
+            username=user.username,
+            group_id=selected_group_id,
+            course_id=course_id,
+            full_name=full_name,
+            source='message_handler',
+            update_id=update_id,
+        )
         
         # Register user
-        success, message = queue_manager.add_to_queue(
+        success, message, reason = queue_manager.add_to_queue(
             selected_group_id,
             course_id, 
             user.id, 
             user.username or "Unknown", 
-            full_name
+            full_name,
+            audit_meta={'source': 'message_handler', 'update_id': update_id},
         )
         
         # Clear user data
         context.user_data.clear()
+
+        if success:
+            self.track_activity(
+                'register_success',
+                user.id,
+                username=user.username,
+                group_id=selected_group_id,
+                course_id=course_id,
+                full_name=full_name,
+                source='message_handler',
+                update_id=update_id,
+            )
+        elif reason == 'duplicate_name':
+            self.track_activity(
+                'register_duplicate_name',
+                user.id,
+                username=user.username,
+                group_id=selected_group_id,
+                course_id=course_id,
+                full_name=full_name,
+                source='message_handler',
+                update_id=update_id,
+            )
         
         if success:
             await update.message.reply_text(f"✅ {message}")
@@ -4606,8 +4915,8 @@ class UniversityRegistrationBot:
     async def setup_user_commands(self, user_id: int):
         """Set up personalized commands based on user permissions"""
         try:
-            logger.info(f"Setting up commands for user {user_id}")
-            logger.info(f"User {user_id} - is_dev: {self.is_dev_user(user_id)}, is_admin: {self.is_admin_user(user_id)}")
+            logger.debug(f"Setting up commands for user {user_id}")
+            logger.debug(f"User {user_id} - is_dev: {self.is_dev_user(user_id)}, is_admin: {self.is_admin_user(user_id)}")
             
             user_commands = [
                 BotCommand("start", "Запустить бота"),
@@ -4621,7 +4930,7 @@ class UniversityRegistrationBot:
             
             # Check if user is admin or dev and add appropriate commands
             if self.is_dev_user(user_id):
-                logger.info(f"User {user_id} is dev - setting up dev commands")
+                logger.debug(f"User {user_id} is dev - setting up dev commands")
                 # Dev users see all commands
                 dev_commands = user_commands + [
                     BotCommand("admin_open", "Админ: Открыть регистрацию"),
@@ -4648,9 +4957,9 @@ class UniversityRegistrationBot:
                     dev_commands,
                     scope=BotCommandScopeChat(chat_id=user_id)
                 )
-                logger.info(f"Successfully set {len(dev_commands)} dev commands for user {user_id}")
+                logger.debug(f"Successfully set {len(dev_commands)} dev commands for user {user_id}")
             elif self.is_admin_user(user_id):
-                logger.info(f"User {user_id} is admin - setting up admin commands")
+                logger.debug(f"User {user_id} is admin - setting up admin commands")
                 # Admin users see user + admin commands (but not dev commands)
                 admin_commands = user_commands + [
                     BotCommand("admin_open", "Админ: Открыть регистрацию"),
@@ -4667,9 +4976,9 @@ class UniversityRegistrationBot:
                     admin_commands,
                     scope=BotCommandScopeChat(chat_id=user_id)
                 )
-                logger.info(f"Successfully set {len(admin_commands)} admin commands for user {user_id}")
+                logger.debug(f"Successfully set {len(admin_commands)} admin commands for user {user_id}")
             else:
-                logger.info(f"User {user_id} is regular user - using default commands")
+                logger.debug(f"User {user_id} is regular user - using default commands")
                 # Regular users: Let them use default commands (no explicit setting)
                 pass
                 
@@ -4974,6 +5283,7 @@ class UniversityRegistrationBot:
     async def handle_register_courses_callback(self, query, group_id, context):
         """Handle register courses callback - show course selection menu"""
         user_id = query.from_user.id
+        update_id = getattr(query, 'id', None)
         
         # Associate user with this group
         queue_manager.user_groups[user_id] = group_id
@@ -5010,6 +5320,26 @@ class UniversityRegistrationBot:
             f"Выберите курс для записи:\n"
             f"🟢 = Открыто | 🔴 = Закрыто\n\n"
             f"💡 *Вы можете записать себя или друзей*"
+        )
+
+        audit_event(
+            "register_menu_shown",
+            user_id=user_id,
+            username=query.from_user.username,
+            group_id=group_id,
+            group_name=group_name,
+            open_course_count=sum(1 for course_id in group_courses if queue_manager.is_course_registration_open(group_id, course_id)),
+            total_course_count=len(group_courses),
+            source='group_menu_callback',
+            update_id=update_id,
+        )
+        self.track_activity(
+            'register_entrypoint',
+            user_id,
+            username=query.from_user.username,
+            group_id=group_id,
+            source='group_menu_callback',
+            update_id=update_id,
         )
         
         await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
