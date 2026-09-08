@@ -3613,10 +3613,23 @@ class UniversityRegistrationBot:
                 else:
                     await update.message.reply_text("❌ Failed to update queue size.")
             else:
-                # Multiple groups - redirect to dev command
+                # Multiple groups - let the admin select one of their own groups
+                keyboard = []
+                for group_id_str in admin_groups:
+                    group_id_int = int(group_id_str) if isinstance(group_id_str, str) else group_id_str
+                    group_info = queue_manager.groups.get(group_id_int, {})
+                    group_name = group_info.get('name', f'Group {group_id_str}')
+                    current_size = queue_manager.get_group_queue_size(group_id_int)
+                    keyboard.append([InlineKeyboardButton(
+                        f"📊 {group_name} (current: {current_size})",
+                        callback_data=f"queuesize_{group_id_int}_{new_size}"
+                    )])
+
+                keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.message.reply_text(
-                    "❌ **Multiple group management requires dev privileges.**\n\n"
-                    "Please use `/dev_queuesize` command for managing multiple groups.",
+                    f"📊 **Select group to set queue size to {new_size}:**",
+                    reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
 
