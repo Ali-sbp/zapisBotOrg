@@ -65,10 +65,6 @@ REGISTRATION_DAY = int(os.getenv('REGISTRATION_DAY', 2))  # Wednesday = 2
 REGISTRATION_TIME = os.getenv('REGISTRATION_TIME', '20:00')
 TIMEZONE = pytz.timezone('Europe/Moscow')  # Adjust to your university's timezone
 
-NASTYA_AUTO_REGISTER_USER_ID = 1365975238
-NASTYA_AUTO_REGISTER_USERNAME = "heartanderblade"
-NASTYA_AUTO_REGISTER_FULL_NAME = "настя"
-
 ACTIVITY_THRESHOLDS = {
     'register_entrypoint': {'limit': 5, 'window_seconds': 30, 'reason': 'register_entrypoint_burst'},
     'register_course_click': {'limit': 6, 'window_seconds': 30, 'reason': 'register_course_click_burst'},
@@ -128,12 +124,6 @@ class QueueManager:
         self.max_queue_size = 50  # Global default (fallback)
         self.group_queue_sizes = defaultdict(lambda: 50)  # group_id -> queue_size
         self.blacklist = []  # List of user IDs that are blacklisted from registration
-
-        # Auto-register flag (in-memory only, resets on restart)
-        self.auto_register_enabled = False
-        self.auto_register_user_id = None
-        self.auto_register_username = None
-        self.nastya_auto_register_enabled = False
 
         # Load configuration first
         self.load_config()
@@ -627,43 +617,6 @@ class QueueManager:
             self.group_registration_status[group_id][course_id] = status
             self.save_data()
     
-    def auto_register_if_enabled(self, group_id, course_id):
-        """Auto-register 'ali' if the flag is on"""
-        if not self.auto_register_enabled or not self.auto_register_user_id:
-            return
-        user_id = self.auto_register_user_id
-        username = self.auto_register_username or "dev"
-        success, msg, reason = self.add_to_queue(
-            group_id,
-            course_id,
-            user_id,
-            username,
-            "ali",
-            audit_meta={'source': 'auto_register'},
-        )
-        if success:
-            logger.info(f"Auto-registered 'ali' for {course_id} in group {group_id}")
-        else:
-            logger.info(f"Auto-register skipped for {course_id} in group {group_id}: {reason} - {msg}")
-
-    def nastya_auto_register_if_enabled(self, group_id, course_id):
-        """Auto-register 'настя' from Nastya's user ID if the flag is on"""
-        if not self.nastya_auto_register_enabled:
-            return
-
-        success, msg, reason = self.add_to_queue(
-            group_id,
-            course_id,
-            NASTYA_AUTO_REGISTER_USER_ID,
-            NASTYA_AUTO_REGISTER_USERNAME,
-            NASTYA_AUTO_REGISTER_FULL_NAME,
-            audit_meta={'source': 'dev_nastya_auto_register'},
-        )
-        if success:
-            logger.info(f"Auto-registered 'настя' for {course_id} in group {group_id}")
-        else:
-            logger.info(f"Nastya auto-register skipped for {course_id} in group {group_id}: {reason} - {msg}")
-
     def is_course_registration_open(self, group_id: int, course_id: str) -> bool:
         """Check if registration is open for a specific course in a specific group"""
         return self.group_registration_status.get(group_id, {}).get(course_id, False)
@@ -2699,8 +2652,6 @@ class UniversityRegistrationBot:
                 group_courses = queue_manager.get_group_courses(group_id)
                 if course_id in group_courses:
                     queue_manager.set_course_registration_status(group_id, course_id, True)
-                    queue_manager.auto_register_if_enabled(group_id, course_id)
-                    queue_manager.nastya_auto_register_if_enabled(group_id, course_id)
                     course_name = group_courses[course_id]
                     group_info = queue_manager.groups.get(group_id, {})
                     group_name = group_info.get('name', f'Group {group_id}')
@@ -2732,8 +2683,6 @@ class UniversityRegistrationBot:
             count = 0
             for course_id in group_courses:
                 queue_manager.set_course_registration_status(group_id, course_id, True)
-                queue_manager.auto_register_if_enabled(group_id, course_id)
-                queue_manager.nastya_auto_register_if_enabled(group_id, course_id)
                 count += 1
 
             group_info = queue_manager.groups.get(group_id, {})
@@ -4373,44 +4322,6 @@ class UniversityRegistrationBot:
         
         await update.message.reply_text(message, parse_mode='Markdown')
 
-    async def dev_autoregister_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Dev: Toggle auto-register 'ali' when any course opens"""
-        user_id = update.effective_user.id
-        if not queue_manager.is_dev(user_id):
-            await update.message.reply_text("❌ Access denied. Dev privileges required.")
-            return
-
-        if queue_manager.auto_register_enabled:
-            queue_manager.auto_register_enabled = False
-            queue_manager.auto_register_user_id = None
-            queue_manager.auto_register_username = None
-            await update.message.reply_text("🔴 Auto-register OFF")
-        else:
-            queue_manager.auto_register_enabled = True
-            queue_manager.auto_register_user_id = user_id
-            queue_manager.auto_register_username = update.effective_user.username or "dev"
-            await update.message.reply_text(
-                "🟢 Auto-register ON\n\n"
-                "'ali' will be automatically registered when any course opens."
-            )
-
-    async def dev_nastya_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Dev: Toggle auto-register 'настя' from Nastya's user ID when any course opens"""
-        user_id = update.effective_user.id
-        if not queue_manager.is_dev(user_id):
-            await update.message.reply_text("❌ Access denied. Dev privileges required.")
-            return
-
-        if queue_manager.nastya_auto_register_enabled:
-            queue_manager.nastya_auto_register_enabled = False
-            await update.message.reply_text("🔴 Nastya auto-register OFF")
-        else:
-            queue_manager.nastya_auto_register_enabled = True
-            await update.message.reply_text(
-                "🟢 Nastya auto-register ON\n\n"
-                "'настя' will be automatically registered from user 1365975238 when any course opens."
-            )
-
     async def dev_remove_registration_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Dev: Remove any registration from any queue"""
         user_id = update.effective_user.id
@@ -4819,8 +4730,6 @@ class UniversityRegistrationBot:
         
         logger.info(f"Opening registration for {course_name} in {group_name} via scheduled job")
         queue_manager.open_course_registration(group_id, course_id)
-        queue_manager.auto_register_if_enabled(group_id, course_id)
-        queue_manager.nastya_auto_register_if_enabled(group_id, course_id)
         if context:
             await self.notify_course_registration_open(context, group_id, course_id)
     
@@ -4906,8 +4815,6 @@ class UniversityRegistrationBot:
         """Scheduled task to open registration for a specific course in a group"""
         if group_id in queue_manager.groups and course_id in queue_manager.groups[group_id].get('courses', {}):
             queue_manager.open_course_registration(group_id, course_id)
-            queue_manager.auto_register_if_enabled(group_id, course_id)
-            queue_manager.nastya_auto_register_if_enabled(group_id, course_id)
             course_info = queue_manager.groups[group_id]['courses'][course_id]
             course_name = course_info.get('name', course_id)
             logger.info(f"Automatically opened registration for {course_name} in group {group_id}")
@@ -5194,8 +5101,6 @@ class UniversityRegistrationBot:
         self.application.add_handler(CommandHandler("dev_blacklist_remove", self.dev_blacklist_remove_command))
         self.application.add_handler(CommandHandler("dev_blacklist_list", self.dev_blacklist_list_command))
         self.application.add_handler(CommandHandler("dev_remove_registration", self.dev_remove_registration_command))
-        self.application.add_handler(CommandHandler("dev_autoregister", self.dev_autoregister_command))
-        self.application.add_handler(CommandHandler("dev_nastya", self.dev_nastya_command))
 
         # Callback handler for inline keyboards
         self.application.add_handler(CallbackQueryHandler(self.callback_handler))
